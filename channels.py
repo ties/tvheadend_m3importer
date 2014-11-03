@@ -2,24 +2,13 @@
 # Parse all multicast URL's from the IPTV stream list
 # (Python 3!)
 #
+import argparse
 import json
-import os
 import collections
 import re
 import urllib
 
 import requests
-
-TVHEADEND_USER = ''
-TVHEADEND_PASS = ''
-
-FILENAME = ''
-
-hostname = None
-assert hostname
-
-
-TVHEADEND_ROOT = 'http://{}/'.format(hostname)
 
 Channel = collections.namedtuple('Channel', ['name', 'url', 'extras'])
 
@@ -27,11 +16,8 @@ Channel = collections.namedtuple('Channel', ['name', 'url', 'extras'])
 class ParseVLC(object):
     line_regex = re.compile("#EXT(?P<tag>\w+):(?P<value>.*)")
 
-    def __init__(self, file_name):
-        if os.path.isfile(file_name):
-            self.file = open(file_name, 'r')
-        else:
-            raise ValueError("File {} does not exist".format(file_name))
+    def __init__(self, file_handle):
+        self.file = file_handle
 
     def __iter__(self):
         ext_m3u = False
@@ -75,40 +61,75 @@ class ParseVLC(object):
 
 
 """
-Wrapper for HTTP request with basic auth, post data
+Wrapper for a Tvheadend instance
 """
 
 
-def tvheadend_api_post(sub_url, data):
-    url = urllib.parse.urljoin(TVHEADEND_ROOT, sub_url)
+class TvheadendAPI(object):
+    def __init__(self, root, user=None, pw=None):
+        self.root_url = root
+        self.auth = (user, pw) if user else None
 
-    res = requests.post(url,  data=data, auth=(TVHEADEND_USER, TVHEADEND_PASS))
-    return res.json()
+    def post(self, sub_url, data):
+        url = urllib.parse.urljoin(self.root_url, sub_url)
 
+        res = requests.post(url,  data=data, auth=self.auth)
+        return res.json()
 
-"""
-Use the TVHeadend API to add all channels:
-"""
-p = ParseVLC(FILENAME)
+    """
+    Add IPTV channel to the first Tvheadend network
+    with the first index. Make sure that max input streams
+    attribute of the Network is set low enough (!)
 
-for channel in p:
-    # Get the UUID of iptv or the new channel, not sure.
-    uuid_request = tvheadend_api_post("/api/idnode/load", data={
-        'class': "mpegts_network",
-        'enum': 1,
-        'query': ''
-    })
-
-    add_request = tvheadend_api_post("/api/mpegts/network/mux_create", data={
-        'uuid': uuid_request['entries'][0]['key'],
-        'conf': json.dumps({
-            "enabled": True,
-            "skipinitscan": True,
-            "iptv_muxname": channel.name,
-            "iptv_url": channel.url,
-            "iptv_interface": "eth0",
-            "charset": "AUTO"
+    channel: Channel namedtuple for given channel
+    """
+    def add_network(self, channel):
+        # Get the UUID of the iptv network
+        uuid_request = self.post("/api/idnode/load", data={
+            'class': "mpegts_network",
+            'enum': 1,
+            'query': ''
         })
-    })
 
-    print("Added channel {} at {}".format(channel.name, channel.url))
+        if not uuid_request['entries']:
+            print("""Make sure that there exists a network in tvheadend.
+
+            It should be op IPTV type and the number of maximum input
+            streams should be low.
+
+            Tvheadend will try to subscribe to all the channels that get
+            added. If this number is too high, it could cause your tvheadend
+            instance to stop responding.
+            """)
+
+        network_uuid = uuid_request['entries'][0]['key']
+
+        self.post("/api/mpegts/network/mux_create", data={
+            'uuid': network_uuid,
+            'conf': json.dumps({
+                "enabled": True,
+                "skipinitscan": True,
+                "iptv_muxname": channel.name,
+                "iptv_url": channel.url,
+                "iptv_interface": "eth0",
+                "charset": "AUTO"
+            })
+        })
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        description='Bulk-add channels to Tvheadend, from a M3U file')
+    parser.add_argument('m3u_file', type=argparse.FileType('r'))
+    parser.add_argument('tvheadend_url', help="URL to tvheadend")
+    parser.add_argument('--user', default=None, help="username")
+    parser.add_argument('--password', default=None, help="password")
+
+    args = parser.parse_args()
+
+    m3u_parser = ParseVLC(args.m3u_file)
+    tvh = TvheadendAPI(args.tvheadend_url, args.user, args.password)
+
+    for channel in m3u_parser:
+        print("Added channel {} at {}".format(channel.name, channel.url))
+        tvh.add_network(channel)
