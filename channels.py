@@ -47,6 +47,7 @@ class ParseVLC(object):
         for line in section:
             m = self.line_regex.match(line)
 
+
             if m:
                 tag, value = m.groups()
                 if tag == 'INF':
@@ -117,6 +118,7 @@ class TvheadendAPI(object):
                 "enabled": 1,
                 "skipinitscan": 1,
                 "iptv_muxname": channel.name,
+                "iptv_sname": channel.name,
                 "iptv_url": channel.url,
                 "iptv_interface": self.interface,
                 "charset": "AUTO"
