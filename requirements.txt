@@ -1,4 +1,4 @@
 flake8==2.2.5
 ipython==2.2.0
 pep8==1.5.7
-requests==2.4.1
+requests==2.20.0
